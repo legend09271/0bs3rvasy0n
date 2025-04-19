@@ -17,18 +17,20 @@ local Settings = {
     HULL_COLOR = Color3.new(1, 0, 0),
     TURRET_COLOR = Color3.new(0, 0, 1),
     USE_VIEWPORT_FRAMES = false,
-    TOGGLE_KEY = Enum.KeyCode.F,
+    TOGGLE_KEY = nil, -- Initially nil, will be set by the keybind input
     HIGHLIGHT_FILL_TRANSPARENCY = 0.5,
     HIGHLIGHT_OUTLINE_TRANSPARENCY = 0.2
 }
 
 -- State variables
-local espEnabled = true
+local espEnabled = false -- Starting as disabled until keybind is set
+local espInitialized = false -- Tracks if the ESP system has been initialized
 local trackedObjects = {}
 local timers = {
     lastCheckTime = 0,
     lastPositionUpdateTime = 0
 }
+local renderStepConnection = nil
 
 -- Create ESP container
 local espFolder = Instance.new("Folder")
@@ -145,6 +147,15 @@ local function checkVehicles()
 end
 
 local function toggleESP()
+    if not Settings.TOGGLE_KEY then
+        StarterGui:SetCore("SendNotification", {
+            Title = "ESP Error",
+            Text = "Please set a keybind first!",
+            Duration = 3
+        })
+        return
+    end
+
     espEnabled = not espEnabled
     
     -- Update all tracked objects
@@ -164,7 +175,55 @@ local function toggleESP()
     })
 end
 
--- Handle script cleanup when the player leaves or rejoins
+-- Initialize ESP functionality
+local function initializeESP()
+    if espInitialized then return end
+    
+    -- Set up the input handler for the toggle key
+    UserInputService.InputBegan:Connect(function(input, gp)
+        if not gp and Settings.TOGGLE_KEY and input.KeyCode == Settings.TOGGLE_KEY then
+            toggleESP()
+        end
+    end)
+    
+    -- Set up the main update loop
+    renderStepConnection = RunService.RenderStepped:Connect(function(dt)
+        timers.lastCheckTime = timers.lastCheckTime + dt
+        timers.lastPositionUpdateTime = timers.lastPositionUpdateTime + dt
+
+        -- Check for new vehicles periodically
+        if timers.lastCheckTime >= Settings.CHECK_INTERVAL then
+            timers.lastCheckTime = 0
+            checkVehicles()
+        end
+
+        -- Update ESP positions more frequently for smoothness
+        if timers.lastPositionUpdateTime >= Settings.POSITION_UPDATE_INTERVAL then
+            timers.lastPositionUpdateTime = 0
+            updatePositions()
+        end
+    end)
+    
+    -- Handle script cleanup when the player leaves or rejoins
+    LocalPlayer.AncestryChanged:Connect(function(_, newParent)
+        if not newParent then
+            cleanupESP()
+        end
+    end)
+    
+    -- Initial vehicle check
+    checkVehicles()
+    
+    espInitialized = true
+    
+    StarterGui:SetCore("SendNotification", {
+        Title = "ESP Initialized",
+        Text = "Press your keybind to toggle ESP",
+        Duration = 3
+    })
+end
+
+-- Handle cleanup when the player leaves or rejoins
 local function cleanupESP()
     for model, espData in pairs(trackedObjects) do
         cleanupTrackedObject(model, espData)
@@ -173,14 +232,14 @@ local function cleanupESP()
     if espFolder and espFolder.Parent then
         espFolder:Destroy()
     end
-end
-
--- Set up cleanup when the player leaves
-LocalPlayer.AncestryChanged:Connect(function(_, newParent)
-    if not newParent then
-        cleanupESP()
+    
+    if renderStepConnection then
+        renderStepConnection:Disconnect()
+        renderStepConnection = nil
     end
-end)
+    
+    espInitialized = false
+}
 
 -- GUI Setup
 local success, Window = pcall(function()
@@ -207,12 +266,23 @@ else
     local MainTab = Window:CreateTab("ESP", 4483362458)
     
     MainTab:CreateKeybind({
-        Name = "Toggle ESP",
-        CurrentKeybind = "F",
+        Name = "Set ESP Toggle Key",
+        CurrentKeybind = "",
         HoldToInteract = false,
         Flag = "ESPBind",
         Callback = function(Key)
             Settings.TOGGLE_KEY = Key
+            
+            -- Initialize ESP system after keybind is set
+            if not espInitialized and Settings.TOGGLE_KEY then
+                initializeESP()
+            end
+            
+            StarterGui:SetCore("SendNotification", {
+                Title = "Keybind Set",
+                Text = "Press " .. tostring(Key) .. " to toggle ESP",
+                Duration = 3
+            })
         end
     })
     
@@ -224,39 +294,8 @@ else
     })
 end
 
--- Input handling for toggle key
-UserInputService.InputBegan:Connect(function(input, gp)
-    if not gp and input.KeyCode == Settings.TOGGLE_KEY then
-        toggleESP()
-    end
-end)
-
--- Main update loop
-local renderStepConnection = RunService.RenderStepped:Connect(function(dt)
-    timers.lastCheckTime = timers.lastCheckTime + dt
-    timers.lastPositionUpdateTime = timers.lastPositionUpdateTime + dt
-
-    -- Check for new vehicles periodically
-    if timers.lastCheckTime >= Settings.CHECK_INTERVAL then
-        timers.lastCheckTime = 0
-        checkVehicles()
-    end
-
-    -- Update ESP positions more frequently for smoothness
-    if timers.lastPositionUpdateTime >= Settings.POSITION_UPDATE_INTERVAL then
-        timers.lastPositionUpdateTime = 0
-        updatePositions()
-    end
-end)
-
--- Initial vehicle check
-checkVehicles()
-
 -- Cleanup function for manual triggering if needed
 local function shutdownESP()
-    if renderStepConnection then 
-        renderStepConnection:Disconnect()
-    end
     cleanupESP()
 end
 
