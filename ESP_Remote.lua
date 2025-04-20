@@ -1,6 +1,39 @@
--- ESP with Rayfield Keybind - Optimized by Claude
--- Original credits: RK
--- Client-side only implementation
+local function isRawExecution()
+    local executionContext = getfenv(0).script
+    if not executionContext or executionContext == nil then
+        return true
+    end
+
+    local success, result = pcall(function()
+        return game:GetService("CoreGui"):FindFirstChild("RobloxGui") ~= nil
+    end)
+
+    local randomKey = tostring(math.random(1000000, 9999999))
+    local verificationTable = {}
+    verificationTable[randomKey] = "authorized"
+    
+    if not success or not result or verificationTable[randomKey] ~= "authorized" then
+        return true
+    end
+    
+    return false
+end
+
+if isRawExecution() then
+    warn("⚠️ This script cannot be executed directly. Please use the proper loader.")
+    return
+end
+
+local authKey = tostring(math.random(100000, 999999))
+local authenticated = false
+
+local function authenticateSession(key)
+    if key == authKey then
+        authenticated = true
+        return true
+    end
+    return false
+end
 
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 local RunService = game:GetService("RunService")
@@ -10,21 +43,19 @@ local UserInputService = game:GetService("UserInputService")
 local StarterGui = game:GetService("StarterGui")
 local LocalPlayer = Players.LocalPlayer
 
--- Settings (moved to the top for easy configuration)
 local Settings = {
     CHECK_INTERVAL = 0.5,
-    POSITION_UPDATE_INTERVAL = 0.1, -- Added small interval for smoother updates
+    POSITION_UPDATE_INTERVAL = 0.1,
     HULL_COLOR = Color3.new(1, 0, 0),
     TURRET_COLOR = Color3.new(0, 0, 1),
     USE_VIEWPORT_FRAMES = false,
-    TOGGLE_KEY = nil, -- Initially nil, will be set by the keybind input
+    TOGGLE_KEY = nil,
     HIGHLIGHT_FILL_TRANSPARENCY = 0.5,
     HIGHLIGHT_OUTLINE_TRANSPARENCY = 0.2
 }
 
--- State variables
-local espEnabled = false -- Starting as disabled until keybind is set
-local espInitialized = false -- Tracks if the ESP system has been initialized
+local espEnabled = false
+local espInitialized = false
 local trackedObjects = {}
 local timers = {
     lastCheckTime = 0,
@@ -32,13 +63,18 @@ local timers = {
 }
 local renderStepConnection = nil
 
--- Create ESP container
-local espFolder = Instance.new("Folder")
-espFolder.Name = "ESP_UIElements"
-espFolder.Parent = CoreGui
+local function createESPFolder()
+    local espFolder = Instance.new("Folder")
+    espFolder.Name = "ESP_UIElements"
+    espFolder.Parent = CoreGui
+    return espFolder
+end
 
--- Helper Functions
+local espFolder = nil
+
 local function cleanupTrackedObject(model, espData)
+    if not authenticated then return end
+    
     if espData.type == "highlight" and espData.highlight then
         espData.highlight:Destroy()
     elseif espData.type == "viewport" and espData.frame then
@@ -48,13 +84,12 @@ local function cleanupTrackedObject(model, espData)
 end
 
 local function createStealthHighlight(model, color)
-    -- Return existing tracker if found
+    if not authenticated then return nil end
+    
     if trackedObjects[model] then return trackedObjects[model] end
     
-    -- Check if model is valid
     if not model or not model:IsA("Model") then return nil end
 
-    -- Create appropriate ESP element
     if Settings.USE_VIEWPORT_FRAMES then
         local frame = Instance.new("ViewportFrame")
         frame.Size = UDim2.new(0, 0, 0, 0)
@@ -95,8 +130,9 @@ local function createStealthHighlight(model, color)
 end
 
 local function updatePositions()
+    if not authenticated then return end
+    
     for model, espData in pairs(trackedObjects) do
-        -- Clean up if model no longer exists
         if not model or not model:IsDescendantOf(game) then
             cleanupTrackedObject(model, espData)
         elseif espEnabled then
@@ -112,32 +148,34 @@ local function updatePositions()
 end
 
 local function processChassis(chassis)
+    if not authenticated then return end
+    
     if not chassis:IsA("Actor") or not chassis.Name:match("^Chassis") then return end
     
-    -- Process Hull
     local hullFolder = chassis:FindFirstChild("Hull")
     if hullFolder then
         for _, obj in ipairs(hullFolder:GetChildren()) do
             if obj:IsA("Model") then
                 createStealthHighlight(obj, Settings.HULL_COLOR)
-                break -- Only highlight the first model
+                break
             end
         end
     end
 
-    -- Process Turret
     local turretFolder = chassis:FindFirstChild("Turret")
     if turretFolder then
         for _, obj in ipairs(turretFolder:GetChildren()) do
             if obj:IsA("Model") then
                 createStealthHighlight(obj, Settings.TURRET_COLOR)
-                break -- Only highlight the first model
+                break
             end
         end
     end
 end
 
 local function checkVehicles()
+    if not authenticated then return end
+    
     local vehiclesFolder = workspace:FindFirstChild("Vehicles")
     if vehiclesFolder then
         for _, chassis in ipairs(vehiclesFolder:GetChildren()) do
@@ -147,6 +185,8 @@ local function checkVehicles()
 end
 
 local function toggleESP()
+    if not authenticated then return end
+    
     if not Settings.TOGGLE_KEY then
         StarterGui:SetCore("SendNotification", {
             Title = "ESP Error",
@@ -158,7 +198,6 @@ local function toggleESP()
 
     espEnabled = not espEnabled
     
-    -- Update all tracked objects
     for model, espData in pairs(trackedObjects) do
         if espData.type == "highlight" then
             espData.highlight.Adornee = espEnabled and model or nil
@@ -167,7 +206,6 @@ local function toggleESP()
         end
     end
 
-    -- Notify user
     StarterGui:SetCore("SendNotification", {
         Title = "ESP Toggle",
         Text = espEnabled and "ESP is ON" or "ESP is OFF",
@@ -175,43 +213,38 @@ local function toggleESP()
     })
 end
 
--- Initialize ESP functionality
 local function initializeESP()
-    if espInitialized then return end
+    if not authenticated or espInitialized then return end
     
-    -- Set up the input handler for the toggle key
+    espFolder = createESPFolder()
+    
     UserInputService.InputBegan:Connect(function(input, gp)
         if not gp and Settings.TOGGLE_KEY and input.KeyCode == Settings.TOGGLE_KEY then
             toggleESP()
         end
     end)
     
-    -- Set up the main update loop
     renderStepConnection = RunService.RenderStepped:Connect(function(dt)
         timers.lastCheckTime = timers.lastCheckTime + dt
         timers.lastPositionUpdateTime = timers.lastPositionUpdateTime + dt
 
-        -- Check for new vehicles periodically
         if timers.lastCheckTime >= Settings.CHECK_INTERVAL then
             timers.lastCheckTime = 0
             checkVehicles()
         end
 
-        -- Update ESP positions more frequently for smoothness
         if timers.lastPositionUpdateTime >= Settings.POSITION_UPDATE_INTERVAL then
             timers.lastPositionUpdateTime = 0
             updatePositions()
         end
     end)
     
-    -- Handle script cleanup when the player leaves or rejoins
     LocalPlayer.AncestryChanged:Connect(function(_, newParent)
         if not newParent then
             cleanupESP()
         end
     end)
     
-    -- Initial vehicle check
     checkVehicles()
     
     espInitialized = true
@@ -223,8 +256,9 @@ local function initializeESP()
     })
 end
 
--- Handle cleanup when the player leaves or rejoins
 local function cleanupESP()
+    if not authenticated then return end
+    
     for model, espData in pairs(trackedObjects) do
         cleanupTrackedObject(model, espData)
     end
@@ -239,65 +273,88 @@ local function cleanupESP()
     end
     
     espInitialized = false
-}
-
--- GUI Setup
-local success, Window = pcall(function()
-    return Rayfield:CreateWindow({
-        Name = "RK ESP Hub",
-        LoadingTitle = "Loading RK ESP",
-        LoadingSubtitle = "By RK",
-        ConfigurationSaving = {
-            Enabled = true,
-            FolderName = "RKESP",
-            FileName = "espconfig"
-        },
-        Discord = {
-            Enabled = false
-        },
-        KeySystem = false
-    })
-end)
-
-if not success then
-    warn("Error creating window: " .. tostring(Window))
-else
-    -- Main ESP Tab
-    local MainTab = Window:CreateTab("ESP", 4483362458)
-    
-    MainTab:CreateKeybind({
-        Name = "Set ESP Toggle Key",
-        CurrentKeybind = "",
-        HoldToInteract = false,
-        Flag = "ESPBind",
-        Callback = function(Key)
-            Settings.TOGGLE_KEY = Key
-            
-            -- Initialize ESP system after keybind is set
-            if not espInitialized and Settings.TOGGLE_KEY then
-                initializeESP()
-            end
-            
-            StarterGui:SetCore("SendNotification", {
-                Title = "Keybind Set",
-                Text = "Press " .. tostring(Key) .. " to toggle ESP",
-                Duration = 3
-            })
-        end
-    })
-    
-    -- Credits Tab
-    local InfoTab = Window:CreateTab("Credits", 4483362458)
-    InfoTab:CreateParagraph({
-        Title = "Made by",
-        Content = "RK"
-    })
 end
 
--- Cleanup function for manual triggering if needed
+local function setupGUI()
+    if not authenticated then
+        warn("Authentication required to initialize GUI")
+        return
+    end
+    
+    local success, Window = pcall(function()
+        return Rayfield:CreateWindow({
+            Name = "RK ESP Hub",
+            LoadingTitle = "Loading RK ESP",
+            LoadingSubtitle = "By RK",
+            ConfigurationSaving = {
+                Enabled = true,
+                FolderName = "RKESP",
+                FileName = "espconfig"
+            },
+            Discord = {
+                Enabled = false
+            },
+            KeySystem = false
+        })
+    end)
+
+    if not success then
+        warn("Error creating window: " .. tostring(Window))
+        return nil
+    else
+        local MainTab = Window:CreateTab("ESP", 4483362458)
+        
+        MainTab:CreateKeybind({
+            Name = "Set ESP Toggle Key",
+            CurrentKeybind = "",
+            HoldToInteract = false,
+            Flag = "ESPBind",
+            Callback = function(Key)
+                Settings.TOGGLE_KEY = Key
+                
+                if not espInitialized and Settings.TOGGLE_KEY then
+                    initializeESP()
+                end
+                
+                StarterGui:SetCore("SendNotification", {
+                    Title = "Keybind Set",
+                    Text = "Press " .. tostring(Key) .. " to toggle ESP",
+                    Duration = 3
+                })
+            end
+        })
+        
+        local InfoTab = Window:CreateTab("Credits", 4483362458)
+        InfoTab:CreateParagraph({
+            Title = "Made by",
+            Content = "RK"
+        })
+        
+        return Window
+    end
+end
+
 local function shutdownESP()
+    if not authenticated then return end
     cleanupESP()
 end
 
--- Expose cleanup function to _G for manual shutdown if needed
-_G.ShutdownESP = shutdownESP
+local function loadWithKey(loadKey)
+    if loadKey and type(loadKey) == "string" and loadKey:match("^RK%-ESP%-[0-9A-F]+$") then
+        authenticated = true
+        local window = setupGUI()
+        return {
+            window = window,
+            shutdown = shutdownESP,
+            authKey = authKey
+        }
+    else
+        warn("Invalid loader key. Access denied.")
+        return false
+    end
+end
+
+return {
+    load = loadWithKey,
+    version = "1.2.3"
+}
